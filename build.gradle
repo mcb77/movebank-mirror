@@ -1,0 +1,44 @@
+// Root build file — only cross-module concerns.
+
+allprojects {
+    group = 'de.firetail.compat.movebank'
+    version = '0.0.1'
+}
+
+wrapper {
+    gradleVersion = '8.13'
+    distributionType = org.gradle.api.tasks.wrapper.Wrapper.DistributionType.ALL
+}
+
+// ── Aggregated integration test task ──────────────────────────────────────
+// Lives at the root so that `./gradlew integrationTest` and
+// `./gradlew :integrationTest --tests <fqn>` work without subproject prefix.
+// The latter is what IntelliJ's auto-generated Run Configurations invoke.
+evaluationDependsOn(':lib')
+
+tasks.register('integrationTest', Test) {
+    description = 'Runs integration tests against the live Movebank API.'
+    group = 'verification'
+    dependsOn ':lib:testClasses'
+
+    useJUnitPlatform {
+        includeTags 'integration'
+    }
+    testClassesDirs = project(':lib').sourceSets.test.output.classesDirs
+    classpath = project(':lib').sourceSets.test.runtimeClasspath
+
+    // Root project has no `java` plugin, so Test task convention defaults
+    // (binaryResultsDirectory, html/junitXml report locations) are not wired.
+    // Point them at root build/ explicitly.
+    binaryResultsDirectory = layout.buildDirectory.dir('test-results/integrationTest/binary')
+    reports.html.outputLocation = layout.buildDirectory.dir('reports/tests/integrationTest')
+    reports.junitXml.outputLocation = layout.buildDirectory.dir('test-results/integrationTest')
+
+    testLogging {
+        events 'skipped', 'failed'
+        exceptionFormat = 'full'
+        showStackTraces = true
+        showCauses = true
+        showStandardStreams = true
+    }
+}

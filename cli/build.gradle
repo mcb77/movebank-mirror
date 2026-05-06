@@ -1,0 +1,46 @@
+plugins {
+    id 'application'
+}
+
+description = 'Command-line front-end for movebank-mirror.'
+
+base {
+    archivesName = 'movebank-mirror-cli'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation project(':lib')
+    implementation 'info.picocli:picocli:4.7.6'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+    implementation 'org.slf4j:slf4j-api:2.0.16'
+    runtimeOnly    'org.slf4j:slf4j-simple:2.0.16'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly    'org.junit.platform:junit-platform-launcher'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+application {
+    mainClass = 'de.firetail.compat.movebank.mirror.cli.CliMain'
+    applicationName = 'movebank-mirror'
+    // slf4j-simple defaults: level=info, output=stderr.
+    applicationDefaultJvmArgs = [
+        '-Dorg.slf4j.simpleLogger.defaultLogLevel=info',
+        '-Dorg.slf4j.simpleLogger.showThreadName=false',
+        '-Dorg.slf4j.simpleLogger.showShortLogName=true',
+    ]
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

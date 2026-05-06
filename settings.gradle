@@ -1,0 +1,12 @@
+rootProject.name = 'movebank-mirror'
+
+include 'lib'
+include 'cli'
+
+if (hasProperty('localMovebankApiClient')) {
+    includeBuild('../movebank-api-client') {
+        dependencySubstitution {
+            substitute module('de.firetail.compat.movebank:movebank-api-client') using project(':')
+        }
+    }
+}
