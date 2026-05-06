@@ -63,15 +63,21 @@ public class EventDataDownloader {
     /**
      * Columns we always request even though Movebank's /study_attribute endpoint
      * does not list them. {@code timestamp}, {@code update_ts} and
-     * {@code sensor_type_id} are sync cursors. {@code event_id},
-     * {@code tag_id}, {@code individual_id} and {@code deployment_id} are
-     * row-identity / join columns — they exist on the events table but live
-     * outside the per-sensor-type "measurements" model, so they don't appear
-     * in /study_attribute.
+     * {@code sensor_type_id} are sync cursors. {@code event_id} is the
+     * per-event row identity in Movebank's backing table — irreducible, and
+     * the only join column with no alternative source.
+     *
+     * <p>Note we do <b>not</b> request {@code tag_id}, {@code individual_id},
+     * or {@code deployment_id} here. They are reconstructable downstream:
+     * {@code tag_id} from the on-disk directory layout, and the other two
+     * from the study's deployment metadata (looking up which deployment
+     * covers each row's timestamp on its tag). Carrying them in every event
+     * row would only duplicate data that already lives in the per-study
+     * JSON, and would risk drift if a deployment is later edited in
+     * Movebank without re-mirroring the events.
      */
     private static final List<String> ALWAYS_REQUESTED = List.of(
-            UPDATE_TS, TIMESTAMP, SENSOR_TYPE_ID,
-            "event_id", "tag_id", "individual_id", "deployment_id");
+            UPDATE_TS, TIMESTAMP, SENSOR_TYPE_ID, "event_id");
 
     private final MovebankApiClient client;
     private final File mirrorBaseDir;
