@@ -60,6 +60,19 @@ public class EventDataDownloader {
     private static final String TIMESTAMP = "timestamp";
     private static final String SENSOR_TYPE_ID = "sensor_type_id";
 
+    /**
+     * Columns we always request even though Movebank's /study_attribute endpoint
+     * does not list them. {@code timestamp}, {@code update_ts} and
+     * {@code sensor_type_id} are sync cursors. {@code event_id},
+     * {@code tag_id}, {@code individual_id} and {@code deployment_id} are
+     * row-identity / join columns — they exist on the events table but live
+     * outside the per-sensor-type "measurements" model, so they don't appear
+     * in /study_attribute.
+     */
+    private static final List<String> ALWAYS_REQUESTED = List.of(
+            UPDATE_TS, TIMESTAMP, SENSOR_TYPE_ID,
+            "event_id", "tag_id", "individual_id", "deployment_id");
+
     private final MovebankApiClient client;
     private final File mirrorBaseDir;
     private final int chunkSize;
@@ -113,9 +126,9 @@ public class EventDataDownloader {
                 if (attributes == null) attributes = Collections.emptyList();
 
                 List<String> attrs = new ArrayList<>(attributes);
-                if (!attrs.contains(UPDATE_TS))      attrs.add(UPDATE_TS);
-                if (!attrs.contains(TIMESTAMP))      attrs.add(TIMESTAMP);
-                if (!attrs.contains(SENSOR_TYPE_ID)) attrs.add(SENSOR_TYPE_ID);
+                for (String required : ALWAYS_REQUESTED) {
+                    if (!attrs.contains(required)) attrs.add(required);
+                }
 
                 try {
                     boolean stillCatchingUp = downloadTagSensor(studyId, tagId, sensorTypeId, attrs, tagDir);
