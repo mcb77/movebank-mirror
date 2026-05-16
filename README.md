@@ -173,6 +173,112 @@ A pass over the whole mirror yields control between passes for `--update-sleep`
 
 ---
 
+## Known limitations
+
+The mirror is built on the assumption that Movebank is mostly *append-only* —
+new tags get added, new event rows stream in, old data is mostly immutable.
+For studies where that holds, the mirror stays in sync indefinitely. For
+studies where it doesn't, it can silently drift from upstream. The current
+release does not have automation for the drift cases; those are real gaps,
+documented honestly here so you know what to expect.
+
+### Metadata is downloaded once and not refreshed
+
+The `metadata` subcommand writes `<studyId>.json` for each accessible study
+the first time it runs. Subsequent runs of `eventdata` / `sync` read those
+JSON files but never re-fetch them. **If individuals, tags, deployments, or
+study attributes are added / edited / deleted upstream, the mirror won't
+notice.** Concretely:
+
+- A new tag deployed on an existing study after first mirroring → its events
+  will never download, because the sensor isn't in the cached metadata.
+- A deployment window edited upstream (e.g. end timestamp extended) → the
+  mirror keeps the old window, so deployment-window-aware tools downstream
+  (like `movebank-mirror-api`'s event enrichment) use stale data.
+- A new sensor type added to a tag → its CSVs won't appear.
+- Licence terms or `i_can_see_data` changes → not picked up.
+
+**Workaround for now:** re-run `movebank-mirror metadata` periodically (e.g.
+weekly via cron) to overwrite the cached JSONs. Event-data sync afterward
+picks up newly-mirrored tags and sensor types automatically.
+
+### Event-data updates are append-only via `update_ts`
+
+The update-mode poll queries Movebank for rows whose `update_ts` is newer
+than the last seen value. That works for new arrivals and for late-arriving
+late data from a still-active tag. It does **not** work for:
+
+- **Retroactive edits to historical rows.** If a row's `update_ts` is bumped
+  upstream because the row was corrected, we'll download the corrected
+  version into an `_update_…csv` file — but the *original* version still
+  sits in an older catch-up chunk on disk. Downstream readers see both, with
+  no rule for which wins.
+- **Deletions.** Movebank's API does not emit tombstones. If a row is removed
+  upstream, the mirror still has it, and there's no mechanism to detect the
+  divergence.
+- **Bulk corrections** (e.g. recomputed location_lat / location_long after a
+  positional-fix-quality re-run) — same drift story as edits, at scale.
+
+**Workaround for now:** for studies that are actively curated, periodically
+delete the mirror's event data for the study and let catch-up re-download
+from scratch. There is no built-in command for this yet; `rm -rf
+<mirror>/<studyId>/<tagId>/` is the manual move.
+
+### No reconciliation / verification pass
+
+There's no `verify` subcommand that compares local row counts to upstream
+row counts to confirm the mirror is faithful. If you need that confidence
+for a paper or a long-term archive, run a periodic external check (e.g.
+total event-row count per (tag, sensor type) against the live API, with
+`-vv` to log per-pair counts).
+
+### On-disk layout is not versioned
+
+The directory tree under the mirror root has no `_format_version` marker.
+If the format changes in a future release (currently unplanned), tooling
+that consumed pre-existing mirrors would need to migrate manually.
+`movebank-mirror-api`'s enrichment logic happens to be backward-compatible
+with all current mirror layouts; future tools may not be.
+
+### What is not a gap
+
+These are sometimes raised but are working as intended:
+
+- Network errors mid-chunk → the chunk file is deleted if no rows were
+  written; next sync re-tries from the same cursor.
+- Concurrent runs against the same mirror dir → blocked by the `.lock`
+  file; the second invocation exits cleanly with a clear error.
+- Studies you no longer have access to → the existing `<studyId>.json`
+  stays on disk; the next event-data pass will fail-with-log for that
+  study but keep going with the others.
+
+### Roadmap, in priority order
+
+If you have a real use case that's blocked by one of these, please open
+an issue — it'll move up the list.
+
+1. **`movebank-mirror metadata --refresh`** — re-fetch metadata for already-
+   mirrored studies, overwriting cached JSON. Resolves the metadata-drift gap
+   and surfaces study-level / metadata-level upstream deletions.
+2. **Detection of `update_ts` collisions** with already-downloaded rows, with
+   a dedupe pass on `event_id` (now that we request that column at download
+   time). Resolves the retroactive-edits gap for most cases.
+3. **`movebank-mirror verify`** — per-(tag, sensor type) row-count
+   comparison against the live API. Surfaces row-count discrepancies cheaply.
+4. **Event-row deletion detection** — `verify --deep` mode that diffs
+   `event_id` sets against the live API to find upstream deletions, with a
+   `--on-deletion` policy (`mirror` / `quarantine` / `preserve`) that lets
+   archival mirrors keep what upstream loses. The research-integrity layer.
+5. **On-disk schema-version tag** — single `_format_version` file under the
+   mirror root so future tooling can detect old layouts.
+6. **`movebank-mirror prune --study <id>`** — clean removal of one study's
+   event data without manual `rm -rf`. Useful both for the "re-download
+   from scratch" workaround and for managing disk usage.
+
+Detailed designs for each are in [`TODO.md`](TODO.md).
+
+---
+
 ## Library usage
 
 The library (Maven coords `de.firetail.compat.movebank:movebank-mirror`) exposes
