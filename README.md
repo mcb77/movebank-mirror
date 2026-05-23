@@ -1,5 +1,10 @@
 # movebank-mirror
 
+[![CI](https://github.com/mcb77/movebank-mirror/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mcb77/movebank-mirror/actions/workflows/ci.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/de.firetail.compat.movebank/movebank-mirror)](https://central.sonatype.com/artifact/de.firetail.compat.movebank/movebank-mirror)
+[![release](https://img.shields.io/github/v/release/mcb77/movebank-mirror)](https://github.com/mcb77/movebank-mirror/releases)
+[![license](https://img.shields.io/badge/license-LGPL--2.1-blue.svg)](LICENSE)
+
 Mirrors [Movebank](https://www.movebank.org/) study metadata and event data to a
 local file/folder structure. A first run catches up historical data in chunks;
 subsequent runs pull only updates.
