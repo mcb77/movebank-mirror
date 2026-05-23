@@ -8,7 +8,7 @@ import picocli.CommandLine.Mixin;
 @Command(
         name = "movebank-mirror",
         mixinStandardHelpOptions = true,
-        version = "movebank-mirror 0.0.2",
+        versionProvider = ManifestVersionProvider.class,
         description = "Mirrors Movebank study metadata and event data to a local file/folder structure.",
         subcommands = {
                 MetadataCommand.class,
