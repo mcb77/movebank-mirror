@@ -4,14 +4,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencsv.CSVWriter;
 import de.firetail.compat.movebank.api.client.MovebankApiClient;
 import de.firetail.compat.movebank.api.client.RecordCallback;
+import de.firetail.compat.movebank.mirror.AtomicFiles;
 import de.firetail.compat.movebank.mirror.StudyJson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -52,6 +56,11 @@ public class EventDataDownloader {
                 24 * 60 * 60 * 1_000L,   //  24 h
              7 * 24 * 60 * 60 * 1_000L,  //   7 d  (max)
     };
+
+    /** How far before the catch-up start the first update pass reaches back; see {@link DownloadState#catchUpStartUpdateTs}. */
+    static final Duration CATCH_UP_UPDATE_TS_MARGIN = Duration.ofDays(1);
+
+    private static final String PART_SUFFIX = ".part";
 
     private static final DateTimeFormatter FILE_TS_FMT =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneOffset.UTC);
@@ -128,6 +137,10 @@ public class EventDataDownloader {
             tagDir.mkdirs();
 
             for (String sensorTypeId : entry.getValue()) {
+                if (Thread.currentThread().isInterrupted()) {
+                    logger.info("Interrupted — stopping study {} early", studyId);
+                    return anyCatchingUp;
+                }
                 List<String> attributes = study.attributesBySensorTypeIDs.get(sensorTypeId);
                 if (attributes == null) attributes = Collections.emptyList();
 
@@ -139,6 +152,9 @@ public class EventDataDownloader {
                 try {
                     boolean stillCatchingUp = downloadTagSensor(studyId, tagId, sensorTypeId, attrs, tagDir);
                     if (stillCatchingUp) anyCatchingUp = true;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw e;
                 } catch (Exception e) {
                     // Error logged — do not count as "still catching up" to avoid spinning the loop
                     logger.error("Failed: studyId={} tagId={} sensorTypeId={}", studyId, tagId, sensorTypeId, e);
@@ -153,6 +169,7 @@ public class EventDataDownloader {
     /** Returns true if catch-up is still in progress (more chunks remain). */
     private boolean downloadTagSensor(String studyId, String tagId, String sensorTypeId,
                                       List<String> attributes, File tagDir) throws Exception {
+        deleteStalePartFiles(tagDir, sensorTypeId);
         File stateFile = new File(tagDir, "state_" + sensorTypeId + ".json");
         DownloadState state = readState(stateFile);
 
@@ -181,11 +198,13 @@ public class EventDataDownloader {
                                 List<String> attributes, File tagDir,
                                 File stateFile, DownloadState state) throws Exception {
 
-        String fileTs = FILE_TS_FMT.format(Instant.now());
-        File csvFile = new File(tagDir, sensorTypeId + "_" + fileTs + ".csv");
+        File csvFile = newCsvFile(tagDir, sensorTypeId + "_");
 
         if (state.lastTimestamp == null) {
             logger.info("Catch-up start: tagId={} sensorTypeId={}", tagId, sensorTypeId);
+            if (state.catchUpStartUpdateTs == null) {
+                state.catchUpStartUpdateTs = catchUpUpdateTsFloor(Instant.now());
+            }
         } else {
             logger.info("Catch-up resume from {}: tagId={} sensorTypeId={}", state.lastTimestamp, tagId, sensorTypeId);
         }
@@ -201,6 +220,12 @@ public class EventDataDownloader {
         if (result.rowCount < chunkSize) {
             state.catchUpComplete = true;
             state.lastTimestamp = null;
+            if (state.catchUpStartUpdateTs != null) {
+                // Deliberately not max(update_ts seen): rows that arrived upstream during a
+                // multi-pass catch-up may carry an update_ts below that max, and would be lost.
+                state.lastUpdateTs = state.catchUpStartUpdateTs;
+                state.catchUpStartUpdateTs = null;
+            }
             logger.info("Catch-up complete ({} rows): tagId={} sensorTypeId={}",
                     result.rowCount, tagId, sensorTypeId);
             saveState(stateFile, state);
@@ -233,8 +258,7 @@ public class EventDataDownloader {
             return;
         }
 
-        String fileTs = FILE_TS_FMT.format(Instant.now());
-        File csvFile = new File(tagDir, sensorTypeId + "_update_" + fileTs + ".csv");
+        File csvFile = newCsvFile(tagDir, sensorTypeId + "_update_");
         logger.info("Update since {}: tagId={} sensorTypeId={}", state.lastUpdateTs, tagId, sensorTypeId);
 
         EventRequestBuilder request = buildRequest(studyId, sensorTypeId, attributes, tagId);
@@ -263,51 +287,80 @@ public class EventDataDownloader {
      * Rows whose sensor_type_id does not match expectedSensorTypeId are skipped
      * (not written to CSV, not tracked) but still counted toward maxRows —
      * workaround for a Movebank API bug that mixes sensor types in one response.
-     * Deletes the file if no matching data rows were written.
+     *
+     * <p>Rows are written to {@code <csvFile>.part} and renamed onto {@code csvFile} only
+     * once the response is complete, so {@code csvFile} never holds a partial download.
+     * The part file is deleted if the request fails or no matching data rows were written.
+     *
+     * @throws IOException if the response stream ended without the end-of-stream callback.
+     *         {@code MovebankApiClient.parseResponse} swallows mid-stream I/O errors (connection
+     *         reset, read timeout) and returns normally; without this check a dropped connection
+     *         would look like a short final chunk and end catch-up prematurely.
      */
     private DownloadResult downloadChunk(EventRequestBuilder request, File csvFile,
                                           int maxRows, String expectedSensorTypeId) throws Exception {
         UpdateTsTracker tracker = new UpdateTsTracker();
         int[] rowCount = {0}; // total rows received (including wrong sensor type)
         int[] written  = {0}; // rows actually written to CSV
+        boolean[] ended = {false};
+        boolean stoppedAtLimit = false;
+        File partFile = new File(csvFile.getParentFile(), csvFile.getName() + PART_SUFFIX);
 
-        try (OutputStreamWriter osw = new OutputStreamWriter(new FileOutputStream(csvFile), StandardCharsets.UTF_8);
-             CSVWriter csvWriter = new CSVWriter(osw)) {
+        boolean complete = false;
+        try {
+            try (OutputStreamWriter osw = new OutputStreamWriter(new FileOutputStream(partFile), StandardCharsets.UTF_8);
+                 CSVWriter csvWriter = new CSVWriter(osw)) {
 
-            client.sendRequest(request, new RecordCallback() {
-                @Override
-                public void start(List<String> header) throws Exception {
-                    csvWriter.writeNext(header.toArray(new String[0]));
-                    tracker.setHeader(header);
-                }
-                @Override
-                public void record(List<String> values, long lineStart, long lineEnd) throws Exception {
-                    rowCount[0]++;
-                    tracker.observeAny(values);
-                    if (tracker.matchesSensorType(values, expectedSensorTypeId)) {
-                        csvWriter.writeNext(values.toArray(new String[0]));
-                        tracker.observe(values);
-                        written[0]++;
+                client.sendRequest(request, new RecordCallback() {
+                    @Override
+                    public void start(List<String> header) throws Exception {
+                        csvWriter.writeNext(header.toArray(new String[0]));
+                        tracker.setHeader(header);
                     }
-                    if (rowCount[0] >= maxRows) {
+                    @Override
+                    public void record(List<String> values, long lineStart, long lineEnd) throws Exception {
+                        rowCount[0]++;
+                        tracker.observeAny(values);
+                        if (tracker.matchesSensorType(values, expectedSensorTypeId)) {
+                            csvWriter.writeNext(values.toArray(new String[0]));
+                            tracker.observe(values);
+                            written[0]++;
+                        }
+                        if (rowCount[0] >= maxRows) {
+                            csvWriter.flush();
+                            throw new StopStreamingException();
+                        }
+                    }
+                    @Override
+                    public void end() throws Exception {
                         csvWriter.flush();
-                        throw new StopStreamingException();
+                        ended[0] = true;
                     }
-                }
-                @Override
-                public void end() throws Exception {
-                    csvWriter.flush();
-                }
-            });
+                });
 
-        } catch (StopStreamingException e) {
-            // expected — chunk limit reached, file already flushed
-            // brief pause so the server-side connection closes before we fire the next request
-            Thread.sleep(500);
+            } catch (StopStreamingException e) {
+                // expected — chunk limit reached, file already flushed
+                stoppedAtLimit = true;
+            }
+
+            if (!ended[0] && !stoppedAtLimit) {
+                throw new IOException("Response stream ended prematurely after " + rowCount[0]
+                        + " rows (connection dropped or timed out?): " + csvFile.getName());
+            }
+
+            if (written[0] > 0) {
+                AtomicFiles.moveAtomically(partFile.toPath(), csvFile.toPath());
+            }
+            complete = true;
+        } finally {
+            if (!complete || written[0] == 0) {
+                Files.deleteIfExists(partFile.toPath());
+            }
         }
 
-        if (written[0] == 0) {
-            csvFile.delete();
+        if (stoppedAtLimit) {
+            // brief pause so the server-side connection closes before we fire the next request
+            sleepUninterruptibly(500);
         }
 
         if (rowCount[0] != written[0]) {
@@ -370,22 +423,59 @@ public class EventDataDownloader {
         }
     }
 
-    private DownloadState readState(File stateFile) {
-        if (!stateFile.exists()) return new DownloadState();
-        try {
-            return mapper.readValue(stateFile, DownloadState.class);
-        } catch (Exception e) {
-            logger.warn("Could not read state {}: {}", stateFile.getName(), e.getMessage());
-            return new DownloadState();
+    /**
+     * update_ts floor for a catch-up starting at {@code now}: wall clock minus
+     * {@link #CATCH_UP_UPDATE_TS_MARGIN}, formatted like Movebank CSV timestamps.
+     * The margin absorbs clock skew and any time-zone offset in Movebank's update_ts;
+     * the cost is re-fetching (duplicating) rows updated within the margin.
+     */
+    static String catchUpUpdateTsFloor(Instant now) {
+        return CSV_TS_FMT.format(now.minus(CATCH_UP_UPDATE_TS_MARGIN).atZone(ZoneOffset.UTC));
+    }
+
+    /**
+     * Returns a not-yet-existing CSV file named {@code <prefix><yyyyMMddHHmmss>.csv}. File
+     * names have one-second resolution, so if a name is already taken (two requests for the
+     * same pair within one second) this waits for the next second rather than overwrite it.
+     */
+    static File newCsvFile(File tagDir, String prefix) throws InterruptedException {
+        while (true) {
+            File f = new File(tagDir, prefix + FILE_TS_FMT.format(Instant.now()) + ".csv");
+            if (!f.exists()) return f;
+            Thread.sleep(1_000 - System.currentTimeMillis() % 1_000);
         }
     }
 
-    private void saveState(File stateFile, DownloadState state) {
-        try {
-            mapper.writerWithDefaultPrettyPrinter().writeValue(stateFile, state);
-        } catch (Exception e) {
-            logger.error("Could not save state {}", stateFile.getName(), e);
+    /** Removes {@code .csv.part} leftovers of this pair from a previous run that was killed mid-download. */
+    private static void deleteStalePartFiles(File tagDir, String sensorTypeId) throws IOException {
+        File[] stale = tagDir.listFiles((dir, name) ->
+                name.startsWith(sensorTypeId + "_") && name.endsWith(".csv" + PART_SUFFIX));
+        if (stale == null) return;
+        for (File f : stale) {
+            logger.warn("Deleting incomplete download from a previous run: {}", f);
+            Files.deleteIfExists(f.toPath());
         }
+    }
+
+    private static void sleepUninterruptibly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // preserve for the caller's loop check
+        }
+    }
+
+    /**
+     * Reads the pair's state. An unreadable state file is an error, not a fresh start:
+     * silently resetting would re-download the pair's whole history as duplicates.
+     */
+    private DownloadState readState(File stateFile) throws IOException {
+        if (!stateFile.exists()) return new DownloadState();
+        return mapper.readValue(stateFile, DownloadState.class);
+    }
+
+    private void saveState(File stateFile, DownloadState state) throws IOException {
+        AtomicFiles.writeJson(mapper, stateFile, state);
     }
 
     // ── Inner types ────────────────────────────────────────────────────────

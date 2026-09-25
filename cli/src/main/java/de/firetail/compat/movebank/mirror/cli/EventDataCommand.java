@@ -14,6 +14,8 @@ import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 @Command(name = "eventdata",
         mixinStandardHelpOptions = true,
@@ -22,6 +24,9 @@ import java.util.concurrent.Callable;
 public class EventDataCommand implements Callable<Integer> {
 
     private static final Logger logger = LoggerFactory.getLogger(EventDataCommand.class);
+
+    /** How long a SIGTERM waits for the in-flight download before the JVM exits anyway. */
+    private static final Duration SHUTDOWN_GRACE = Duration.ofSeconds(60);
 
     @ParentCommand CliMain parent;
 
@@ -89,25 +94,43 @@ public class EventDataCommand implements Callable<Integer> {
                 loop.setStudyIdFilter(includeStudies::contains);
             }
 
-            if (once) {
-                loop.runPass();
-                return ExitCode.OK;
-            }
-
-            // Long-running mode: install a shutdown hook so SIGTERM ends the current pass cleanly.
+            // SIGTERM/SIGINT: interrupt the runner, then hold the JVM open until the loop
+            // has stopped at a (tag, sensor type) boundary. The JVM exits as soon as all
+            // hooks return, so the hook must wait — bounded, because a blocking HTTP read
+            // does not respond to interrupts. A download cut off by the deadline leaves
+            // only a .part file, which the next run discards.
             Thread runner = Thread.currentThread();
-            Thread hook = new Thread(runner::interrupt, "movebank-mirror-shutdown");
+            CountDownLatch stopped = new CountDownLatch(1);
+            Thread hook = new Thread(() -> {
+                logger.info("Shutdown requested — finishing current download (up to {}s)",
+                        SHUTDOWN_GRACE.toSeconds());
+                runner.interrupt();
+                try {
+                    stopped.await(SHUTDOWN_GRACE.toMillis(), TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ignore) {
+                    // JVM is going down regardless
+                }
+            }, "movebank-mirror-shutdown");
             Runtime.getRuntime().addShutdownHook(hook);
             try {
-                loop.run();
+                if (once) {
+                    loop.runPass();
+                } else {
+                    loop.run();
+                }
+                if (Thread.currentThread().isInterrupted()) {
+                    logger.info("Interrupted — stopped.");
+                    return ExitCode.INTERRUPTED;
+                }
+                return ExitCode.OK;
             } catch (InterruptedException e) {
-                logger.info("Interrupted — stopping.");
+                logger.info("Interrupted — stopped.");
                 Thread.currentThread().interrupt();
                 return ExitCode.INTERRUPTED;
             } finally {
+                stopped.countDown();
                 try { Runtime.getRuntime().removeShutdownHook(hook); } catch (IllegalStateException ignore) {}
             }
-            return ExitCode.OK;
         } catch (ProcessLock.AlreadyHeldException e) {
             System.err.println("error: " + e.getMessage());
             return ExitCode.LOCK_HELD;

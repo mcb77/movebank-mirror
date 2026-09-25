@@ -13,8 +13,17 @@ public class DownloadState {
     /** True once a catch-up chunk returned fewer rows than the chunk size limit. */
     public boolean catchUpComplete;
 
-    /** Max update_ts seen across all downloaded data — cursor for update mode. */
+    /** Cursor for update mode: rows with a newer update_ts are fetched on the next update pass. */
     public String lastUpdateTs;
+
+    /**
+     * update_ts floor recorded when catch-up starts (wall clock minus a safety margin).
+     * Becomes {@link #lastUpdateTs} once catch-up completes, so rows inserted upstream
+     * while catch-up was in progress — including backfills into timestamp ranges that
+     * were already downloaded — are picked up by the first update pass. Null for state
+     * files written before this field existed; those fall back to the max update_ts seen.
+     */
+    public String catchUpStartUpdateTs;
 
     /**
      * Current update polling interval in milliseconds.

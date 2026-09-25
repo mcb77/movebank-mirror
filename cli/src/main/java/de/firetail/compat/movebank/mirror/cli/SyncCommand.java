@@ -1,5 +1,7 @@
 package de.firetail.compat.movebank.mirror.cli;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
@@ -14,6 +16,8 @@ import java.util.concurrent.Callable;
         description = "Run a metadata pass, then start the event-data sync. The common "
                 + "'just keep this directory current' mode.")
 public class SyncCommand implements Callable<Integer> {
+
+    private static final Logger logger = LoggerFactory.getLogger(SyncCommand.class);
 
     @ParentCommand CliMain parent;
 
@@ -53,7 +57,13 @@ public class SyncCommand implements Callable<Integer> {
             md.includeStudies = includeStudies;
             md.licenseMode = licenseMode;
             int rc = md.call();
-            if (rc != ExitCode.OK) return rc;
+            // GENERIC_ERROR means some studies failed (e.g. 403 on one study) — already
+            // logged; event data for the rest must still sync. Anything else is fatal.
+            if (rc == ExitCode.GENERIC_ERROR) {
+                logger.warn("Metadata pass had per-study failures — continuing with event data");
+            } else if (rc != ExitCode.OK) {
+                return rc;
+            }
         }
 
         EventDataCommand ev = new EventDataCommand();

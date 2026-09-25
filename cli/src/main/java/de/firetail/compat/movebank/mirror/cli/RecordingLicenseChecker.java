@@ -2,6 +2,7 @@ package de.firetail.compat.movebank.mirror.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.firetail.compat.movebank.api.client.LicenseChecker;
+import de.firetail.compat.movebank.mirror.AtomicFiles;
 
 import java.io.File;
 import java.io.IOException;
@@ -34,7 +35,7 @@ final class RecordingLicenseChecker implements LicenseChecker {
         try {
             File out = new File(baseDir,
                     String.format("%012d-license.json", Long.parseLong(studyId)));
-            mapper.writeValue(out, new AcceptedLicense(studyId, studyName, html));
+            AtomicFiles.writeJson(mapper, out, new AcceptedLicense(studyId, studyName, html));
             return true;
         } catch (IOException e) {
             throw new UncheckedIOException(e);

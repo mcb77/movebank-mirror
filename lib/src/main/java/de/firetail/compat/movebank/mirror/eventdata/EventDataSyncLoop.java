@@ -90,7 +90,9 @@ public class EventDataSyncLoop {
     // ── Single pass ────────────────────────────────────────────────────────
 
     /**
-     * Processes all study JSON files found in the mirror directory.
+     * Processes all study JSON files found in the mirror directory. If the calling
+     * thread is interrupted, the pass ends after the current (tag, sensor type) pair
+     * and the interrupt flag is left set.
      *
      * @return true if at least one study still has catch-up work remaining
      */
@@ -108,6 +110,10 @@ public class EventDataSyncLoop {
         int errors = 0;
 
         for (File jsonFile : jsonFiles) {
+            if (Thread.currentThread().isInterrupted()) {
+                logger.info("Interrupted — ending pass early");
+                break;
+            }
             String studyId = studyIdFromFilename(jsonFile.getName());
             if (!studyIdFilter.test(studyId)) {
                 continue;
@@ -117,6 +123,10 @@ public class EventDataSyncLoop {
                 StudyJson study = mapper.readValue(jsonFile, StudyJson.class);
                 boolean stillCatchingUp = downloader.downloadStudy(study);
                 if (stillCatchingUp) catchingUp++;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); // run() / the caller sees the flag
+                logger.info("Interrupted — ending pass early");
+                break;
             } catch (Exception e) {
                 errors++;
                 logger.error("Failed to process study JSON {}: {}", jsonFile.getName(), e.getMessage(), e);

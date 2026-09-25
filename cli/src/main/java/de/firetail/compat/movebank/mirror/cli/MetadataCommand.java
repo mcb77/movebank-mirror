@@ -3,6 +3,7 @@ package de.firetail.compat.movebank.mirror.cli;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.firetail.compat.movebank.api.client.LicenseChecker;
 import de.firetail.compat.movebank.api.client.MovebankApiClient;
+import de.firetail.compat.movebank.mirror.AtomicFiles;
 import de.firetail.compat.movebank.mirror.MovebankMirror;
 import de.firetail.compat.movebank.mirror.Study;
 import de.firetail.compat.movebank.mirror.StudyId;
@@ -123,7 +124,7 @@ public class MetadataCommand implements Callable<Integer> {
                 StudyJson json = new StudyJson(study);
                 File out = new File(baseDir,
                         String.format("%012d.json", Long.parseLong(studyId.studyId())));
-                mapper.writerWithDefaultPrettyPrinter().writeValue(out, json);
+                AtomicFiles.writeJson(mapper, out, json);
                 written++;
             } catch (Exception e) {
                 logger.error("Failed for study {} ({}): {}",

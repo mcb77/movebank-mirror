@@ -47,6 +47,12 @@ application {
         '-Dorg.slf4j.simpleLogger.defaultLogLevel=info',
         '-Dorg.slf4j.simpleLogger.showThreadName=false',
         '-Dorg.slf4j.simpleLogger.showShortLogName=true',
+        // movebank-api-client's HttpURLConnection sets no timeouts, so a stalled
+        // connection would hang the sync loop forever. These JDK-wide defaults apply
+        // to it; the read timeout is generous because Movebank can take minutes to
+        // start streaming a large event query.
+        '-Dsun.net.client.defaultConnectTimeout=60000',
+        '-Dsun.net.client.defaultReadTimeout=1800000',
     ]
 }
 

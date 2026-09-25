@@ -249,8 +249,13 @@ with all current mirror layouts; future tools may not be.
 
 These are sometimes raised but are working as intended:
 
-- Network errors mid-chunk → the chunk file is deleted if no rows were
-  written; next sync re-tries from the same cursor.
+- Network errors mid-chunk (including a connection that silently drops or
+  times out) → the partial download is discarded; next sync re-tries from
+  the same cursor. Chunks are written to `<name>.csv.part` and renamed only
+  when complete, so a `.csv` file is never partial; `.part` leftovers from a
+  killed run are removed on the next pass.
+- SIGTERM / Ctrl-C → the in-flight download gets up to 60 s to finish, so
+  the process stops at a (tag, sensor type) boundary.
 - Concurrent runs against the same mirror dir → blocked by the `.lock`
   file; the second invocation exits cleanly with a clear error.
 - Studies you no longer have access to → the existing `<studyId>.json`
