@@ -16,7 +16,7 @@ repositories {
 }
 
 dependencies {
-    api 'de.firetail.compat.movebank:movebank-api-client:0.0.2'
+    api 'de.firetail.compat.movebank:movebank-api-client:0.0.3'
     implementation 'com.opencsv:opencsv:5.9'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
     implementation 'org.slf4j:slf4j-api:2.0.16'
