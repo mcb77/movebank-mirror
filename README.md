@@ -384,6 +384,17 @@ If you have `movebank-api-client` checked out as a sibling directory:
 applies downstream: `BasicImport`'s `gradle.properties` exposes
 `localMovebankMirror=true` to consume this repo via `includeBuild`.
 
+## Related projects
+
+Together these form a toolchain for working with Movebank data offline:
+
+- [movebank-api-client](https://github.com/mcb77/movebank-api-client): Java client for the Movebank REST API
+- **movebank-mirror** (this repository): mirrors Movebank studies to plain files on your disk; resumable, incremental
+- [movebank-mirror-api](https://github.com/mcb77/movebank-mirror-api): serves the Movebank REST API from a local mirror, a drop-in for `move`/`move2` and the Java client
+- [movebank-rocker](https://github.com/mcb77/movebank-rocker): pinned R environment (rocker/geospatial + move, move2, moveVis, sf)
+
+Background: [Keep a Movebank study on your own computer](https://www.schaeuffelhut-berger.de/en/blog/keep-a-movebank-study-on-your-own-computer/?ref=github)
+
 ---
 
 ## License
