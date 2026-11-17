@@ -184,10 +184,9 @@ The `tech.yanand.maven-central-publish` plugin adds the upload task:
 ./gradlew :lib:publishToMavenCentralPortal
 ```
 
-**Note the `:lib:` prefix** — `./gradlew publishToMavenCentralPortal`
-without it tries to publish from the root project, which isn't
-configured for publication. The `:lib:` form targets the library
-subproject.
+Without the `:lib:` prefix, Gradle runs the task in every project that
+has it; only `:lib` does, so `./gradlew publishToMavenCentralPortal`
+publishes the same thing. The prefix just makes the target explicit.
 
 Successful output ends with:
 
