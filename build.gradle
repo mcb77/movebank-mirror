@@ -2,7 +2,7 @@
 
 allprojects {
     group = 'de.firetail.compat.movebank'
-    version = '0.0.3'
+    version = '0.0.4'
 }
 
 wrapper {
