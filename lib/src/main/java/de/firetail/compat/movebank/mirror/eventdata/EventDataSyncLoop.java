@@ -3,6 +3,7 @@ package de.firetail.compat.movebank.mirror.eventdata;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.firetail.compat.movebank.api.client.MovebankApiClient;
 import de.firetail.compat.movebank.mirror.StudyJson;
+import de.firetail.compat.movebank.mirror.reader.MirrorLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -97,8 +98,7 @@ public class EventDataSyncLoop {
      * @return true if at least one study still has catch-up work remaining
      */
     public boolean runPass() {
-        File[] jsonFiles = mirrorBaseDir.listFiles((dir, name) ->
-                name.endsWith(".json") && !name.endsWith("-license.json"));
+        File[] jsonFiles = mirrorBaseDir.listFiles((dir, name) -> MirrorLayout.isStudyFileName(name));
         if (jsonFiles == null || jsonFiles.length == 0) {
             logger.warn("No study JSON files found in {}", mirrorBaseDir.getAbsolutePath());
             return false;

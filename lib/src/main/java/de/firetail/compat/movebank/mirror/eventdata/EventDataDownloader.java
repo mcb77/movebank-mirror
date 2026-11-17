@@ -6,6 +6,7 @@ import de.firetail.compat.movebank.api.client.MovebankApiClient;
 import de.firetail.compat.movebank.api.client.RecordCallback;
 import de.firetail.compat.movebank.mirror.AtomicFiles;
 import de.firetail.compat.movebank.mirror.StudyJson;
+import de.firetail.compat.movebank.mirror.reader.MirrorLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -118,7 +119,7 @@ public class EventDataDownloader {
      */
     public boolean downloadStudy(StudyJson study) throws Exception {
         String studyId = study.study.get("id");
-        File studyDir = new File(mirrorBaseDir, String.format("%012d", Long.parseLong(studyId)));
+        File studyDir = MirrorLayout.studyDir(mirrorBaseDir, studyId);
         studyDir.mkdirs();
 
         Map<String, Set<String>> sensorTypesByTag = new LinkedHashMap<>();

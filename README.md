@@ -304,6 +304,7 @@ import de.firetail.compat.movebank.mirror.StudyId;
 import de.firetail.compat.movebank.mirror.StudyJson;
 import de.firetail.compat.movebank.mirror.eventdata.EventDataDownloader;
 import de.firetail.compat.movebank.mirror.eventdata.EventDataSyncLoop;
+import de.firetail.compat.movebank.mirror.reader.MirrorLayout;
 
 import java.io.File;
 import java.util.Set;
@@ -323,8 +324,7 @@ MovebankMirror mirror = new MovebankMirror(client);
 ObjectMapper mapper = new ObjectMapper();
 for (StudyId studyId : mirror.getAllStudyIds()) {
     Study study = mirror.getStudyRefData(studyId);
-    File studyFile = new File(baseDir,
-            String.format("%012d.json", Long.parseLong(studyId.studyId())));
+    File studyFile = MirrorLayout.studyFile(baseDir, studyId.studyId());
     mapper.writerWithDefaultPrettyPrinter()
           .writeValue(studyFile, new StudyJson(study));
 }
@@ -341,6 +341,38 @@ Implement your own `LicenseChecker` to plug in a different acceptance policy
 (prompt-driven, log-only, deny-by-default, etc.).
 
 ---
+
+### Reading a mirror
+
+The `reader` package reads what the writer produced, the way live Movebank
+would return it: events ordered by sensor type, individual and time (merged
+across all tags an individual carried), each assigned to its deployment by
+Movebank's rule. [movebank-mirror-api](https://github.com/mcb77/movebank-mirror-api)
+serves its REST responses from it, and
+[movebank-mcp](https://github.com/mcb77/movebank-mcp) uses it in-process.
+
+```java
+import de.firetail.compat.movebank.mirror.reader.EventQuery;
+import de.firetail.compat.movebank.mirror.reader.MirrorReader;
+
+MirrorReader reader = new MirrorReader(new File("/var/lib/mvb"));
+reader.studies();                       // List<StudyJson>, in id order
+reader.study("2911040");                // StudyJson, or null
+
+EventQuery gps = EventQuery.study("2911040")
+        .sensorTypes(List.of("653"))
+        .between("2008-07-11", "2008-08-08");   // UTC; "to" includes that whole day
+reader.readEvents(gps, event -> {
+    String lat = event.get("location_lat");
+    String individual = event.deployment() == null ? null : event.deployment().individualId();
+    // ...
+});
+```
+
+`MovebankEventCsv` writes the same events as Movebank's event CSV (column
+projection, empty missing values, synthetic `tag_id` / `individual_id` /
+`deployment_id` / `event_id`). `MirrorLayout` holds the file and directory
+names; `SensorType.ALL` is Movebank's sensor type table.
 
 ## Building
 

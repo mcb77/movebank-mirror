@@ -8,6 +8,7 @@ import de.firetail.compat.movebank.mirror.MovebankMirror;
 import de.firetail.compat.movebank.mirror.Study;
 import de.firetail.compat.movebank.mirror.StudyId;
 import de.firetail.compat.movebank.mirror.StudyJson;
+import de.firetail.compat.movebank.mirror.reader.MirrorLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
@@ -122,8 +123,7 @@ public class MetadataCommand implements Callable<Integer> {
             try {
                 Study study = mirror.getStudyRefData(studyId);
                 StudyJson json = new StudyJson(study);
-                File out = new File(baseDir,
-                        String.format("%012d.json", Long.parseLong(studyId.studyId())));
+                File out = MirrorLayout.studyFile(baseDir, studyId.studyId());
                 AtomicFiles.writeJson(mapper, out, json);
                 written++;
             } catch (Exception e) {
