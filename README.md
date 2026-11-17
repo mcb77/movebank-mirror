@@ -349,7 +349,7 @@ would return it: events ordered by sensor type, individual and time (merged
 across all tags an individual carried), each assigned to its deployment by
 Movebank's rule. [movebank-mirror-api](https://github.com/mcb77/movebank-mirror-api)
 serves its REST responses from it, and
-[movebank-mcp](https://github.com/mcb77/movebank-mcp) uses it in-process.
+[movebank-mirror-mcp](https://github.com/mcb77/movebank-mirror-mcp) uses it in-process.
 
 ```java
 import de.firetail.compat.movebank.mirror.reader.EventQuery;
